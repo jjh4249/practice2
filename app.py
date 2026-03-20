@@ -1,21 +1,38 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 # ---------------------------
 # 기본 설정
 # ---------------------------
 st.set_page_config(page_title="젤라또 매출 대시보드", layout="wide")
-
 st.title("🍦 젤라또 창업 매출 분석 대시보드")
+
+# ---------------------------
+# 파일 경로 설정
+# ---------------------------
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "data"
+
+STORE_FILE = DATA_DIR / "store_full_dataset_updated.csv"
+MONTHLY_FILE = DATA_DIR / "monthly_sales_2023_2025_wide.csv"
 
 # ---------------------------
 # 데이터 로드
 # ---------------------------
 @st.cache_data
 def load_data():
-    store = pd.read_csv("store_full_dataset_updated.csv")
-    monthly = pd.read_csv("monthly_sales_2023_2025_wide.csv")
+    if not STORE_FILE.exists():
+        st.error(f"파일이 없습니다: {STORE_FILE}")
+        st.stop()
+
+    if not MONTHLY_FILE.exists():
+        st.error(f"파일이 없습니다: {MONTHLY_FILE}")
+        st.stop()
+
+    store = pd.read_csv(STORE_FILE)
+    monthly = pd.read_csv(MONTHLY_FILE)
     return store, monthly
 
 store_df, monthly_df = load_data()
@@ -24,7 +41,6 @@ store_df, monthly_df = load_data()
 # KPI 영역
 # ---------------------------
 col1, col2, col3 = st.columns(3)
-
 col1.metric("평균 월매출", f"{int(store_df['월매출(만원)'].mean())}만원")
 col2.metric("최고 매출", f"{int(store_df['월매출(만원)'].max())}만원")
 col3.metric("매장 수", len(store_df))
@@ -35,7 +51,6 @@ st.divider()
 # 1. 매장별 매출 (Bar)
 # ---------------------------
 st.subheader("📊 매장별 월매출 비교")
-
 bar_data = store_df.set_index("매장명")["월매출(만원)"]
 st.bar_chart(bar_data)
 
@@ -49,7 +64,6 @@ st.subheader("📈 월별 매출 추이")
 monthly_df = monthly_df.set_index("년도-월")
 
 selected_store = st.selectbox("매장 선택", monthly_df.columns)
-
 st.line_chart(monthly_df[selected_store])
 
 st.divider()
@@ -62,9 +76,8 @@ st.subheader("🥧 상권별 매출 비중")
 market_data = store_df.groupby("상권 유형")["월매출(만원)"].sum()
 
 fig, ax = plt.subplots()
-ax.pie(market_data, labels=market_data.index, autopct='%1.1f%%')
+ax.pie(market_data, labels=market_data.index, autopct="%1.1f%%")
 ax.set_title("상권별 매출 비중")
-
 st.pyplot(fig)
 
 st.divider()
@@ -79,5 +92,4 @@ ax2.scatter(store_df["점포 규모(평수)"], store_df["월매출(만원)"])
 ax2.set_xlabel("점포 규모(평수)")
 ax2.set_ylabel("월매출(만원)")
 ax2.set_title("점포 규모 vs 매출")
-
 st.pyplot(fig2)
