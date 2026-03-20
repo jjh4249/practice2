@@ -1,13 +1,13 @@
-import os
-from pathlib import Path
 import math
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.express as px
+import streamlit as st
 
 # =========================================================
-# Streamlit Page Config
+# Streamlit 기본 설정
 # =========================================================
 st.set_page_config(
     page_title="Gelatico | 프랜차이즈 창업 의사결정 플랫폼",
@@ -17,17 +17,18 @@ st.set_page_config(
 )
 
 # =========================================================
-# Global Constants
+# 경로 / 파일명 설정
+# 네 GitHub data 폴더 파일명 기준으로 수정함
 # =========================================================
 DATA_DIR = Path("data")
 
 EXPECTED_FILES = {
     "store_data": DATA_DIR / "store_data.csv",
     "monthly_sales": DATA_DIR / "monthly_sales.csv",
-    "top_stores": DATA_DIR / "top_stores.csv",
-    "location_analysis": DATA_DIR / "location_analysis.csv",
-    "cost_structure": DATA_DIR / "cost_structure.csv",
-    "marketing_effect": DATA_DIR / "marketing_effect.csv",
+    "top_stores": DATA_DIR / "top_store_data.csv",
+    "location_analysis": DATA_DIR / "market_data.csv",
+    "cost_structure": DATA_DIR / "store_size_cost.csv",
+    "marketing_effect": DATA_DIR / "marketing_data.csv",
 }
 
 REQUIRED_COLUMNS = {
@@ -38,6 +39,8 @@ REQUIRED_COLUMNS = {
     "cost_structure": ["cost_item", "percentage"],
     "marketing_effect": ["strategy", "revenue_uplift_pct", "monthly_cost_million_krw"],
 }
+
+LOCATION_ORDER = ["오피스", "대학가", "주거", "관광"]
 
 MENU_ITEMS = [
     {
@@ -96,13 +99,10 @@ PROCESS_STEPS = [
     ("8단계", "정식 오픈", "운영 시작 후 슈퍼바이징 및 성과 모니터링"),
 ]
 
-LOCATION_ORDER = ["오피스", "대학가", "주거", "관광"]
-
 # =========================================================
-# Styling
+# CSS
 # =========================================================
 def apply_custom_css() -> None:
-    """한글 폰트가 최대한 안정적으로 보이도록 간단한 CSS 적용"""
     st.markdown(
         """
         <style>
@@ -151,18 +151,17 @@ def apply_custom_css() -> None:
     )
 
 # =========================================================
-# Utility Functions
+# 유틸
 # =========================================================
 def safe_read_csv(file_path: Path) -> pd.DataFrame | None:
     """
-    CSV 파일 읽기.
-    UTF-8, UTF-8-SIG, CP949 순서로 시도.
+    CSV 읽기
+    utf-8, utf-8-sig, cp949 순서로 시도
     """
     if not file_path.exists():
         return None
 
-    encodings = ["utf-8", "utf-8-sig", "cp949"]
-    for enc in encodings:
+    for enc in ["utf-8", "utf-8-sig", "cp949"]:
         try:
             return pd.read_csv(file_path, encoding=enc)
         except Exception:
@@ -170,23 +169,93 @@ def safe_read_csv(file_path: Path) -> pd.DataFrame | None:
     return None
 
 
-def validate_columns(df: pd.DataFrame, required_cols: list[str], df_name: str) -> bool:
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    필수 컬럼 존재 여부 확인.
-    누락되면 사용자에게 경고 표시.
+    여러 형태의 컬럼명을 표준 컬럼명으로 통일
     """
-    missing = [col for col in required_cols if col not in df.columns]
-    if missing:
-        st.warning(
-            f"'{df_name}' 데이터에 필요한 컬럼이 없습니다: {missing} "
-            f"→ 데모 데이터 또는 일부 기능 제한으로 동작합니다."
-        )
-        return False
-    return True
+    df = df.copy()
+    df.columns = [str(col).strip() for col in df.columns]
+
+    column_map = {
+        # store_data 관련
+        "매장명": "store_name",
+        "점포명": "store_name",
+        "지점명": "store_name",
+        "store": "store_name",
+        "store_name ": "store_name",
+
+        "지역": "region",
+        "권역": "region",
+        "시도": "region",
+
+        "입지유형": "location_type",
+        "상권유형": "location_type",
+        "상권": "location_type",
+        "입지": "location_type",
+        "location": "location_type",
+
+        "평수": "store_size_pyeong",
+        "매장평수": "store_size_pyeong",
+        "점포평수": "store_size_pyeong",
+        "store_size": "store_size_pyeong",
+
+        "오픈월": "opening_month",
+        "개점월": "opening_month",
+        "오픈일": "opening_month",
+        "opening": "opening_month",
+
+        # monthly_sales 관련
+        "월": "month",
+        "기준월": "month",
+        "날짜": "month",
+        "month_date": "month",
+
+        "월매출": "revenue_million_krw",
+        "매출": "revenue_million_krw",
+        "매출액": "revenue_million_krw",
+        "revenue": "revenue_million_krw",
+        "월 평균 매출": "revenue_million_krw",
+
+        # top_stores 관련
+        "평균매출": "avg_revenue_million_krw",
+        "평균 월매출": "avg_revenue_million_krw",
+        "평균월매출": "avg_revenue_million_krw",
+        "순위": "rank",
+
+        # location_analysis 관련
+        "유동인구지수": "foot_traffic_index",
+        "유동인구": "foot_traffic_index",
+        "평균매출(만원)": "avg_revenue_million_krw",
+
+        # cost_structure 관련
+        "비용항목": "cost_item",
+        "항목": "cost_item",
+        "비용비율": "percentage",
+        "비율": "percentage",
+        "구성비": "percentage",
+
+        # marketing_effect 관련
+        "전략": "strategy",
+        "마케팅전략": "strategy",
+        "매출상승률": "revenue_uplift_pct",
+        "매출증가율": "revenue_uplift_pct",
+        "상승률": "revenue_uplift_pct",
+        "월마케팅비": "monthly_cost_million_krw",
+        "마케팅비": "monthly_cost_million_krw",
+    }
+
+    df = df.rename(columns=column_map)
+    return df
+
+
+def validate_columns(df: pd.DataFrame, required_cols: list[str]) -> list[str]:
+    """
+    누락된 컬럼 목록 반환
+    """
+    return [col for col in required_cols if col not in df.columns]
 
 
 def format_million_krw(value: float) -> str:
-    """백만원 단위 숫자를 보기 좋게 포맷"""
     return f"{value:,.0f}만원"
 
 
@@ -199,14 +268,26 @@ def month_to_season(month_int: int) -> str:
         return "여름"
     return "가을"
 
+
+def ensure_month_str(series: pd.Series) -> pd.Series:
+    """
+    월 컬럼을 YYYY-MM 형태 문자열로 정리
+    """
+    s = series.astype(str).str.strip()
+
+    # 202301 -> 2023-01 변환
+    s = s.replace(r"^(\d{4})(\d{2})$", r"\1-\2", regex=True)
+    # 2023/01 -> 2023-01
+    s = s.str.replace("/", "-", regex=False)
+    # 2023.01 -> 2023-01
+    s = s.str.replace(".", "-", regex=False)
+
+    return s
+
 # =========================================================
-# Demo Data
+# 데모 데이터 생성
 # =========================================================
 def create_demo_data() -> dict[str, pd.DataFrame]:
-    """
-    실제 CSV가 없어도 앱이 바로 실행될 수 있도록
-    18개 매장, 2023-01 ~ 2025-12 (36개월) 기준의 데모 데이터 생성
-    """
     np.random.seed(42)
 
     store_names = [
@@ -242,7 +323,7 @@ def create_demo_data() -> dict[str, pd.DataFrame]:
     }
 
     store_bonus = {
-        "제주점": 18.0,   # 최고 매장
+        "제주점": 18.0,
         "해운대점": 10.0,
         "강남점": 8.0,
         "광화문점": 7.0,
@@ -261,17 +342,16 @@ def create_demo_data() -> dict[str, pd.DataFrame]:
     months = pd.date_range("2023-01-01", "2025-12-01", freq="MS")
     monthly_rows = []
 
-    # 여름 성수기 반영
     seasonality = {
         1: 0.92, 2: 0.95, 3: 1.00, 4: 1.03, 5: 1.05, 6: 1.12,
         7: 1.22, 8: 1.20, 9: 1.06, 10: 1.00, 11: 0.96, 12: 0.98
     }
 
-    for i, store in store_data.iterrows():
+    for _, store in store_data.iterrows():
         base = base_by_location[store["location_type"]] + store_bonus.get(store["store_name"], 0.0)
 
         for dt in months:
-            trend_factor = 1 + ((dt.year - 2023) * 0.03)  # 연 3% 성장
+            trend_factor = 1 + ((dt.year - 2023) * 0.03)
             seasonal_factor = seasonality[dt.month]
             noise = np.random.normal(0, 4.5)
 
@@ -288,13 +368,11 @@ def create_demo_data() -> dict[str, pd.DataFrame]:
 
     monthly_sales = pd.DataFrame(monthly_rows)
 
-    # 평균 매출을 74.49에 맞추기 위해 스케일 조정
     current_avg = monthly_sales["revenue_million_krw"].mean()
     target_avg = 74.49
     scaling = target_avg / current_avg
     monthly_sales["revenue_million_krw"] = (monthly_sales["revenue_million_krw"] * scaling).round(1)
 
-    # 최대 매출을 124.82 근처로 맞춤
     idx_jeju_peak = monthly_sales[
         (monthly_sales["store_name"] == "제주점") &
         (monthly_sales["month"] == "2025-08")
@@ -341,53 +419,180 @@ def create_demo_data() -> dict[str, pd.DataFrame]:
     }
 
 # =========================================================
-# Data Loading
+# 데이터 후처리
+# =========================================================
+def preprocess_store_data(df: pd.DataFrame, fallback_df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    missing = validate_columns(df, REQUIRED_COLUMNS["store_data"])
+    if missing:
+        return fallback_df.copy()
+
+    df["store_name"] = df["store_name"].astype(str).str.strip()
+    df["region"] = df["region"].astype(str).str.strip()
+    df["location_type"] = df["location_type"].astype(str).str.strip()
+    df["store_size_pyeong"] = pd.to_numeric(df["store_size_pyeong"], errors="coerce")
+    df["opening_month"] = ensure_month_str(df["opening_month"])
+
+    df = df.dropna(subset=["store_name", "region", "location_type", "store_size_pyeong", "opening_month"])
+    return df
+
+
+def preprocess_monthly_sales(df: pd.DataFrame, fallback_df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    missing = validate_columns(df, REQUIRED_COLUMNS["monthly_sales"])
+    if missing:
+        return fallback_df.copy()
+
+    df["month"] = ensure_month_str(df["month"])
+    df["store_name"] = df["store_name"].astype(str).str.strip()
+    df["region"] = df["region"].astype(str).str.strip()
+    df["location_type"] = df["location_type"].astype(str).str.strip()
+    df["revenue_million_krw"] = pd.to_numeric(df["revenue_million_krw"], errors="coerce")
+
+    df["month_date"] = pd.to_datetime(df["month"], format="%Y-%m", errors="coerce")
+    df["month_num"] = df["month_date"].dt.month
+    df["season"] = df["month_num"].apply(lambda x: month_to_season(int(x)) if pd.notnull(x) else "기타")
+
+    df = df.dropna(subset=["month", "store_name", "region", "location_type", "revenue_million_krw"])
+    return df
+
+
+def preprocess_top_stores(df: pd.DataFrame, monthly_sales: pd.DataFrame, fallback_df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    missing = validate_columns(df, REQUIRED_COLUMNS["top_stores"])
+
+    if missing:
+        if monthly_sales is not None and not monthly_sales.empty:
+            rebuilt = (
+                monthly_sales.groupby("store_name", as_index=False)["revenue_million_krw"]
+                .mean()
+                .rename(columns={"revenue_million_krw": "avg_revenue_million_krw"})
+                .sort_values("avg_revenue_million_krw", ascending=False)
+                .reset_index(drop=True)
+            )
+            rebuilt["rank"] = rebuilt.index + 1
+            return rebuilt[["store_name", "avg_revenue_million_krw", "rank"]]
+        return fallback_df.copy()
+
+    df["avg_revenue_million_krw"] = pd.to_numeric(df["avg_revenue_million_krw"], errors="coerce")
+    df["rank"] = pd.to_numeric(df["rank"], errors="coerce")
+    df = df.dropna(subset=["store_name", "avg_revenue_million_krw", "rank"])
+    return df
+
+
+def preprocess_location_analysis(df: pd.DataFrame, monthly_sales: pd.DataFrame, fallback_df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    missing = validate_columns(df, REQUIRED_COLUMNS["location_analysis"])
+
+    if missing:
+        if monthly_sales is not None and not monthly_sales.empty:
+            rebuilt = (
+                monthly_sales.groupby("location_type", as_index=False)["revenue_million_krw"]
+                .mean()
+                .rename(columns={"revenue_million_krw": "avg_revenue_million_krw"})
+            )
+            traffic_map = {"오피스": 88, "대학가": 82, "주거": 68, "관광": 91}
+            rebuilt["foot_traffic_index"] = rebuilt["location_type"].map(traffic_map).fillna(75)
+            return rebuilt
+        return fallback_df.copy()
+
+    df["avg_revenue_million_krw"] = pd.to_numeric(df["avg_revenue_million_krw"], errors="coerce")
+    df["foot_traffic_index"] = pd.to_numeric(df["foot_traffic_index"], errors="coerce")
+    df = df.dropna(subset=["location_type", "avg_revenue_million_krw", "foot_traffic_index"])
+    return df
+
+
+def preprocess_cost_structure(df: pd.DataFrame, fallback_df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    missing = validate_columns(df, REQUIRED_COLUMNS["cost_structure"])
+
+    if missing:
+        return fallback_df.copy()
+
+    df["percentage"] = pd.to_numeric(df["percentage"], errors="coerce")
+    df = df.dropna(subset=["cost_item", "percentage"])
+    return df
+
+
+def preprocess_marketing_effect(df: pd.DataFrame, fallback_df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    missing = validate_columns(df, REQUIRED_COLUMNS["marketing_effect"])
+
+    if missing:
+        return fallback_df.copy()
+
+    df["revenue_uplift_pct"] = pd.to_numeric(df["revenue_uplift_pct"], errors="coerce")
+    df["monthly_cost_million_krw"] = pd.to_numeric(df["monthly_cost_million_krw"], errors="coerce")
+    df = df.dropna(subset=["strategy", "revenue_uplift_pct", "monthly_cost_million_krw"])
+    return df
+
+# =========================================================
+# 데이터 로딩
 # =========================================================
 @st.cache_data
 def load_data() -> tuple[dict[str, pd.DataFrame], list[str]]:
-    """
-    CSV가 있으면 CSV 우선 사용.
-    없거나 문제 있으면 데모 데이터 사용.
-    반환:
-        - 데이터 딕셔너리
-        - 상태 메시지 리스트
-    """
-    demo_data = create_demo_data()
-    loaded_data = {}
+    demo = create_demo_data()
+    raw_data = {}
     messages = []
 
     for key, path in EXPECTED_FILES.items():
         df = safe_read_csv(path)
+
         if df is None:
-            loaded_data[key] = demo_data[key]
-            messages.append(f"{path.name}: 파일이 없어 데모 데이터를 사용합니다.")
+            raw_data[key] = demo[key]
+            messages.append(f"{path.name}: 파일을 찾지 못해 데모 데이터를 사용합니다.")
             continue
 
-        is_valid = validate_columns(df, REQUIRED_COLUMNS[key], path.name)
-        if not is_valid:
-            loaded_data[key] = demo_data[key]
-            messages.append(f"{path.name}: 컬럼 문제로 데모 데이터를 사용합니다.")
-            continue
+        df = normalize_columns(df)
+        raw_data[key] = df
+        messages.append(f"{path.name}: 파일 로드는 성공했습니다.")
 
-        loaded_data[key] = df
-        messages.append(f"{path.name}: 정상 로드 완료")
+    # 각 데이터셋 후처리
+    store_data_missing = validate_columns(raw_data["store_data"], REQUIRED_COLUMNS["store_data"])
+    if store_data_missing:
+        messages.append(f"store_data.csv: 필요한 컬럼이 부족하여 데모 데이터로 대체했습니다. 누락 컬럼: {store_data_missing}")
+    store_data = preprocess_store_data(raw_data["store_data"], demo["store_data"])
 
-    # 타입 정리
-    if "monthly_sales" in loaded_data:
-        monthly = loaded_data["monthly_sales"].copy()
-        monthly["revenue_million_krw"] = pd.to_numeric(monthly["revenue_million_krw"], errors="coerce")
-        monthly["month_date"] = pd.to_datetime(monthly["month"], format="%Y-%m", errors="coerce")
-        monthly["month_num"] = monthly["month_date"].dt.month
-        monthly["season"] = monthly["month_num"].apply(lambda x: month_to_season(int(x)) if pd.notnull(x) else "기타")
-        loaded_data["monthly_sales"] = monthly
+    monthly_sales_missing = validate_columns(raw_data["monthly_sales"], REQUIRED_COLUMNS["monthly_sales"])
+    if monthly_sales_missing:
+        messages.append(f"monthly_sales.csv: 필요한 컬럼이 부족하여 데모 데이터로 대체했습니다. 누락 컬럼: {monthly_sales_missing}")
+    monthly_sales = preprocess_monthly_sales(raw_data["monthly_sales"], demo["monthly_sales"])
 
-    return loaded_data, messages
+    top_missing = validate_columns(raw_data["top_stores"], REQUIRED_COLUMNS["top_stores"])
+    if top_missing:
+        messages.append(f"top_store_data.csv: 일부 컬럼이 부족해 monthly_sales 기준으로 재생성하거나 데모 데이터를 사용했습니다. 누락 컬럼: {top_missing}")
+    top_stores = preprocess_top_stores(raw_data["top_stores"], monthly_sales, demo["top_stores"])
+
+    location_missing = validate_columns(raw_data["location_analysis"], REQUIRED_COLUMNS["location_analysis"])
+    if location_missing:
+        messages.append(f"market_data.csv: 일부 컬럼이 부족해 monthly_sales 기준으로 재생성하거나 데모 데이터를 사용했습니다. 누락 컬럼: {location_missing}")
+    location_analysis = preprocess_location_analysis(raw_data["location_analysis"], monthly_sales, demo["location_analysis"])
+
+    cost_missing = validate_columns(raw_data["cost_structure"], REQUIRED_COLUMNS["cost_structure"])
+    if cost_missing:
+        messages.append(f"store_size_cost.csv: 필요한 컬럼이 부족하여 데모 데이터를 사용했습니다. 누락 컬럼: {cost_missing}")
+    cost_structure = preprocess_cost_structure(raw_data["cost_structure"], demo["cost_structure"])
+
+    marketing_missing = validate_columns(raw_data["marketing_effect"], REQUIRED_COLUMNS["marketing_effect"])
+    if marketing_missing:
+        messages.append(f"marketing_data.csv: 필요한 컬럼이 부족하여 데모 데이터를 사용했습니다. 누락 컬럼: {marketing_missing}")
+    marketing_effect = preprocess_marketing_effect(raw_data["marketing_effect"], demo["marketing_effect"])
+
+    processed = {
+        "store_data": store_data,
+        "monthly_sales": monthly_sales,
+        "top_stores": top_stores,
+        "location_analysis": location_analysis,
+        "cost_structure": cost_structure,
+        "marketing_effect": marketing_effect,
+    }
+
+    return processed, messages
 
 
 def compute_kpis(monthly_sales: pd.DataFrame) -> dict[str, float | str]:
-    """
-    핵심 KPI 계산
-    """
     store_count = monthly_sales["store_name"].nunique()
     avg_revenue = float(monthly_sales["revenue_million_krw"].mean())
     max_revenue = float(monthly_sales["revenue_million_krw"].max())
@@ -403,7 +608,7 @@ def compute_kpis(monthly_sales: pd.DataFrame) -> dict[str, float | str]:
     }
 
 # =========================================================
-# Simulation Logic
+# 시뮬레이션
 # =========================================================
 def run_simulation(
     location_type: str,
@@ -412,19 +617,12 @@ def run_simulation(
     location_analysis: pd.DataFrame,
     marketing_effect: pd.DataFrame,
 ) -> dict[str, float]:
-    """
-    창업 시뮬레이션 계산 로직
-    단위:
-      - 매출/비용/이익/투자비: 백만원(만원 단위 표기용)
-    """
-    # 1) 입지 평균 매출 기준
     row = location_analysis[location_analysis["location_type"] == location_type]
     if row.empty:
         base_revenue = 74.49
     else:
         base_revenue = float(row["avg_revenue_million_krw"].iloc[0])
 
-    # 2) 평수별 보정
     size_multiplier = {
         10: 0.88,
         15: 1.00,
@@ -433,7 +631,6 @@ def run_simulation(
 
     expected_revenue = base_revenue * size_multiplier
 
-    # 3) 마케팅 효과 합산
     total_uplift_pct = 0.0
     marketing_cost = 0.0
 
@@ -442,20 +639,15 @@ def run_simulation(
         total_uplift_pct = selected_df["revenue_uplift_pct"].sum()
         marketing_cost = selected_df["monthly_cost_million_krw"].sum()
 
-    # 과도한 중첩 효과 방지
     total_uplift_pct = min(total_uplift_pct, 18.0)
     expected_revenue *= (1 + total_uplift_pct / 100)
 
-    # 4) 비용 가정
-    # 원재료비: 매출의 28%
     cogs = expected_revenue * 0.28
 
-    # 고정비: 임대료 + 인건비 + 공과금 + 기타
     rent_by_size = {10: 11.0, 15: 14.0, 20: 18.0}
     labor_by_size = {10: 13.0, 15: 16.0, 20: 20.0}
     utilities_by_size = {10: 3.5, 15: 4.2, 20: 5.0}
 
-    # 입지 유형에 따른 임대료 차등
     location_rent_multiplier = {
         "오피스": 1.18,
         "대학가": 1.05,
@@ -470,12 +662,9 @@ def run_simulation(
 
     fixed_cost = monthly_rent + labor_cost + utilities_cost + misc_fixed + marketing_cost
 
-    # 5) 순이익
     net_profit = expected_revenue - cogs - fixed_cost
 
-    # 6) 초기 투자비
-    # 평수 기반 + 설비 + 가맹/교육 + 초도물품
-    fitout_per_pyeong = 2.6  # 평당 백만원
+    fitout_per_pyeong = 2.6
     interior_cost = store_size * fitout_per_pyeong
     equipment_cost = {10: 32.0, 15: 38.0, 20: 45.0}[store_size]
     franchise_fee = 12.0
@@ -484,7 +673,6 @@ def run_simulation(
 
     initial_investment = interior_cost + equipment_cost + franchise_fee + training_fee + opening_inventory
 
-    # 7) 회수기간
     if net_profit <= 0:
         payback_period_months = math.inf
     else:
@@ -499,7 +687,7 @@ def run_simulation(
     }
 
 # =========================================================
-# Page Render Functions
+# 페이지 렌더링
 # =========================================================
 def render_home(kpis: dict[str, float | str]) -> None:
     st.markdown('<div class="main-title">Gelatico</div>', unsafe_allow_html=True)
@@ -529,14 +717,15 @@ def render_home(kpis: dict[str, float | str]) -> None:
 
     st.write("")
     col1, col2 = st.columns([1.5, 1])
+
     with col1:
         st.subheader("왜 Gelatico인가")
         st.write(
             """
             Gelatico는 단순한 아이스크림 매장이 아니라,
             계절성과 감성 소비를 동시에 공략하는 프리미엄 디저트 브랜드입니다.
-            여름 피크 시즌 매출 상승 구조와 지역별 수요 차이를 데이터로 확인할 수 있어,
-            창업 검토 단계에서 훨씬 설득력 있는 판단이 가능합니다.
+            여름 성수기 수요 상승 구조와 지역별 수요 차이를 데이터로 확인할 수 있어,
+            창업 검토 단계에서 더 설득력 있는 판단이 가능합니다.
             """
         )
 
@@ -556,7 +745,7 @@ def render_home(kpis: dict[str, float | str]) -> None:
     with col2:
         st.subheader("핵심 포인트")
         st.write("- 18개 매장 운영 데이터 반영")
-        st.write("- 2023-01 ~ 2025-12, 36개월 매출 흐름 분석")
+        st.write("- 36개월 매출 흐름 분석")
         st.write("- 여름 성수기 수요 상승 반영")
         st.write("- 지역/입지 유형별 매출 차이 분석")
         st.write("- 마케팅 전략 포함 수익 시뮬레이션")
@@ -580,8 +769,9 @@ def render_about(kpis: dict[str, float | str], store_data: pd.DataFrame) -> None
     c3.metric("최고 성과 매장", str(kpis["top_store"]))
 
     st.subheader("핵심 차별화 요소")
-    diff1, diff2, diff3 = st.columns(3)
-    with diff1:
+    d1, d2, d3 = st.columns(3)
+
+    with d1:
         st.markdown(
             """
             <div class="card">
@@ -591,7 +781,7 @@ def render_about(kpis: dict[str, float | str], store_data: pd.DataFrame) -> None
             """,
             unsafe_allow_html=True,
         )
-    with diff2:
+    with d2:
         st.markdown(
             """
             <div class="card">
@@ -601,7 +791,7 @@ def render_about(kpis: dict[str, float | str], store_data: pd.DataFrame) -> None
             """,
             unsafe_allow_html=True,
         )
-    with diff3:
+    with d3:
         st.markdown(
             """
             <div class="card">
@@ -615,6 +805,7 @@ def render_about(kpis: dict[str, float | str], store_data: pd.DataFrame) -> None
     st.subheader("운영 네트워크")
     region_counts = store_data["region"].value_counts().reset_index()
     region_counts.columns = ["region", "store_count"]
+
     fig = px.bar(
         region_counts,
         x="region",
@@ -661,7 +852,6 @@ def render_process() -> None:
     process_df = pd.DataFrame(PROCESS_STEPS, columns=["단계", "프로세스", "설명"])
     st.dataframe(process_df, use_container_width=True, hide_index=True)
 
-    st.write("")
     st.markdown(
         """
         <div class="cta-box">
@@ -674,21 +864,15 @@ def render_process() -> None:
     )
 
 
-def render_dashboard(
-    monthly_sales: pd.DataFrame,
-    cost_structure: pd.DataFrame,
-) -> None:
+def render_dashboard(monthly_sales: pd.DataFrame, cost_structure: pd.DataFrame) -> None:
     st.title("Dashboard")
 
-    # -----------------------------------------------------
-    # Filters
-    # -----------------------------------------------------
     st.subheader("필터")
     f1, f2, f3 = st.columns(3)
 
     available_regions = ["전체"] + sorted(monthly_sales["region"].dropna().unique().tolist())
     available_stores = ["전체"] + sorted(monthly_sales["store_name"].dropna().unique().tolist())
-    available_locations = ["전체"] + [x for x in LOCATION_ORDER if x in monthly_sales["location_type"].unique().tolist()]
+    available_locations = ["전체"] + sorted(monthly_sales["location_type"].dropna().unique().tolist())
 
     selected_region = f1.selectbox("지역", available_regions)
     selected_store = f2.selectbox("매장", available_stores)
@@ -707,9 +891,6 @@ def render_dashboard(
         st.error("선택한 조건에 해당하는 데이터가 없습니다.")
         return
 
-    # -----------------------------------------------------
-    # KPI
-    # -----------------------------------------------------
     kpi_store_count = filtered["store_name"].nunique()
     kpi_avg = filtered["revenue_million_krw"].mean()
     kpi_max = filtered["revenue_million_krw"].max()
@@ -721,9 +902,6 @@ def render_dashboard(
     c3.metric("최대 월매출", format_million_krw(kpi_max))
     c4.metric("상위 매장", kpi_top_store)
 
-    # -----------------------------------------------------
-    # Bar Chart: Store Comparison
-    # -----------------------------------------------------
     st.subheader("매장별 평균 매출 비교")
     store_compare = (
         filtered.groupby("store_name", as_index=False)["revenue_million_krw"]
@@ -743,9 +921,6 @@ def render_dashboard(
     fig_bar.update_layout(height=450, xaxis_tickangle=-30)
     st.plotly_chart(fig_bar, use_container_width=True)
 
-    # -----------------------------------------------------
-    # Line Chart: Monthly Revenue Trends (Top 5)
-    # -----------------------------------------------------
     st.subheader("상위 5개 매장 월별 매출 추이")
     top5_stores = (
         filtered.groupby("store_name")["revenue_million_krw"]
@@ -770,14 +945,12 @@ def render_dashboard(
     fig_line.update_layout(height=500)
     st.plotly_chart(fig_line, use_container_width=True)
 
-    # -----------------------------------------------------
-    # Seasonality Insight
-    # -----------------------------------------------------
     st.subheader("계절성 분석")
     season_df = (
         filtered.groupby("season", as_index=False)["revenue_million_krw"]
         .mean()
     )
+
     season_order = ["봄", "여름", "가을", "겨울"]
     season_df["season"] = pd.Categorical(season_df["season"], categories=season_order, ordered=True)
     season_df = season_df.sort_values("season")
@@ -794,9 +967,6 @@ def render_dashboard(
     fig_season.update_layout(height=400)
     st.plotly_chart(fig_season, use_container_width=True)
 
-    # -----------------------------------------------------
-    # Pie Chart: Cost Structure
-    # -----------------------------------------------------
     st.subheader("비용 구조")
     fig_pie = px.pie(
         cost_structure,
@@ -808,9 +978,6 @@ def render_dashboard(
     fig_pie.update_layout(height=450)
     st.plotly_chart(fig_pie, use_container_width=True)
 
-    # -----------------------------------------------------
-    # Data Table
-    # -----------------------------------------------------
     st.subheader("원본 데이터 미리보기")
     preview_cols = ["month", "store_name", "region", "location_type", "revenue_million_krw"]
     st.dataframe(
@@ -820,22 +987,23 @@ def render_dashboard(
     )
 
 
-def render_simulation(
-    location_analysis: pd.DataFrame,
-    marketing_effect: pd.DataFrame,
-) -> None:
+def render_simulation(location_analysis: pd.DataFrame, marketing_effect: pd.DataFrame) -> None:
     st.title("Simulation")
     st.write("입지 유형, 매장 규모, 마케팅 전략을 바탕으로 예상 수익성을 계산합니다.")
 
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        location_type = st.selectbox("입지 유형", LOCATION_ORDER, index=0)
+        location_options = sorted(location_analysis["location_type"].dropna().unique().tolist())
+        if not location_options:
+            location_options = LOCATION_ORDER
+
+        location_type = st.selectbox("입지 유형", location_options)
         store_size = st.selectbox("매장 평수", [10, 15, 20], index=1)
         selected_marketing = st.multiselect(
             "적용할 마케팅 전략",
             options=marketing_effect["strategy"].tolist(),
-            default=["인스타 광고"],
+            default=marketing_effect["strategy"].tolist()[:1],
         )
 
     results = run_simulation(
@@ -861,7 +1029,6 @@ def render_simulation(
         else:
             st.success(f"예상 투자금 회수기간: 약 {results['payback_period_months']:.1f}개월")
 
-    st.write("")
     st.subheader("시뮬레이션 해석")
     st.write(
         f"""
@@ -880,12 +1047,13 @@ def render_simulation(
     )
 
 # =========================================================
-# Main App
+# 메인
 # =========================================================
 def main() -> None:
     apply_custom_css()
 
     data, load_messages = load_data()
+
     monthly_sales = data["monthly_sales"]
     store_data = data["store_data"]
     cost_structure = data["cost_structure"]
@@ -894,7 +1062,6 @@ def main() -> None:
 
     kpis = compute_kpis(monthly_sales)
 
-    # Sidebar
     st.sidebar.title("Gelatico")
     st.sidebar.caption("Franchise Decision Platform")
 
@@ -916,7 +1083,6 @@ def main() -> None:
     st.sidebar.write("- Max revenue: 12,482만원")
     st.sidebar.write("- Top store: 제주점")
 
-    # Page Routing
     try:
         if page == "Home":
             render_home(kpis)
@@ -934,11 +1100,8 @@ def main() -> None:
         st.error("앱 렌더링 중 오류가 발생했습니다.")
         st.exception(e)
 
-    # Footer
     st.markdown("---")
-    st.caption(
-        "Gelatico demo platform | 브랜드 이해 + 상권/매출/수익성 데이터 기반 창업 의사결정"
-    )
+    st.caption("Gelatico demo platform | 브랜드 이해 + 상권/매출/수익성 데이터 기반 창업 의사결정")
 
 
 if __name__ == "__main__":
